@@ -3,10 +3,14 @@ from scrape import *
 DT_FORMAT = "%Y-%m-%d, %H:%M"
 ROOT_URL ="jp.mercari.com/"
 
-def add_item(brand, item_code, neg=None):
-    item = Item(brand, item_code, neg=neg)
-    update_average_price(item_code)
-    update_head_code(item_code)
+def add_item(brand, item_code, neg=None, brand_dependent=False):
+    if brand_dependent:
+        item = Item(brand, brand + " " + item_code, neg=neg)
+    else:
+        item = Item(brand, item_code, neg=neg)
+    update_average_price(item._item_code)
+    update_head_code(item._item_code)
+
         
 
 def db_init(db):
@@ -28,9 +32,13 @@ def db_init(db):
     """)
     conn.commit()
 
-def update_target_price(item_code, price, brand = 0):
+def update_target_price(item_code, price=0, brand = 0):
     item = Item(brand, item_code.lower())
-    item.set_target_price(price)
+    if price:
+        item.set_target_price(price)
+    else:
+        item.set_target_price(item._average_price_sold)
+    return item.target_price
 
 def update_average_price(item_code, brand = 0, brand_bool = False):
     item = Item(brand, item_code.lower())
@@ -77,6 +85,28 @@ def update_head_code(item_code):
     """)
     conn.commit()
 
+def check_initial_entries (item_code, filterbytp = True, target_price = 0, pages=3):
+    item = Item(0, item_code)
+    item.target_price = update_target_price(item_code, target_price)
+    entries = scrape_entries(item._item_code, "sale", pages=pages, neg=item._neg)[2]
+    filtered = []
+    if filterbytp:
+        for e in entries:
+            if e._price <= item.target_price:
+                filtered.append(e)
+        return filtered
+    else:
+        return entries
+
+def fast_item_query(item_code, target_price=0, pages=3, neg=None):
+    entries = scrape_entries(item_code, "sale", pages=pages, neg=neg)[2]
+    result = []
+    if target_price:
+        for e in entries:
+            if e._price <= target_price:
+                result.append(e)
+    return parse_all_entry(result)
+
 def check_new_entries(item_code, set_target = 0):
     item = Item(0, item_code)
     code = parse_head(item_code, neg=item._neg)
@@ -88,21 +118,15 @@ def check_new_entries(item_code, set_target = 0):
         WHERE item_code = "{item_code}"
     """)
     old_code = old_head.fetchone()[0]
-    
     if old_code == code:
-        print("No new updates!")
         return 0
     
     else:
         offset = code.find(old_code[:3])
     
     new_entries = scrape_head(item_code, offset, neg=item._neg)
-    cur.execute(f"""
-        UPDATE items SET
-        head_code = "{code}"
-        WHERE item_code = "{item_code}"
-    """)
-    conn.commit()
+    
+    
 
     if set_target > 2:
         update_target_price(item_code, set_target)
@@ -111,6 +135,13 @@ def check_new_entries(item_code, set_target = 0):
     elif set_target == 1:
         new_entries = filter_target_price(item_code, new_entries)
 
+
+    cur.execute(f"""
+        UPDATE items SET
+        head_code = "{code}"
+        WHERE item_code = "{item_code}"
+    """)
+    conn.commit()
     return new_entries
 
 def parse_link_from_entry(entry):
@@ -122,7 +153,7 @@ def parse_alt_from_entry(entry):
     return entry._alt
 
 def parse_price_from_entry(entry):
-    return "¥" + entry._price
+    return "¥" + str(entry._price)
 
 def parse_single_entry(entry):
     title = parse_alt_from_entry(entry)
@@ -137,7 +168,7 @@ def parse_all_entry(entries: tuple):
         result.append(parse_single_entry(e))
     return result
 
-def check_all_updates(target_price_bool = False):
+def check_all_updates(target_price_bool):
     conn = sqlite3.connect("market.db")
     cur = conn.cursor()
     items = cur.execute("""
@@ -149,8 +180,17 @@ def check_all_updates(target_price_bool = False):
         if target_price_bool:
             new_entries = check_new_entries(item[2], target_price_bool)
         new_entries = check_new_entries(item[2])
+        results.append((item[2],new_entries))
     
     return results
+
+def check_one_update(item_code, target_price_bool):
+    item = Item(0, item_code)
+    if target_price_bool:
+        new_entries = check_new_entries(item_code, target_price_bool)
+    else:
+        new_entries = check_new_entries(item_code)
+    return new_entries
 
 def filter_target_price(item_code, entries):
     conn = sqlite3.connect("market.db")
@@ -186,12 +226,8 @@ if __name__ == "__main__":
 
     #update_all_average_price()
 
-    for update in check_all_updates(target_price_bool=True):
-        item, result = update[0], update[1]
-        if result:
-            for res in result:
-                title, link, price = parse_all_entry(res[1])
-                print (f"New {item} post matched!: \n\nTitle:{title}\nLink:{link}\nPrice:{price}")
-                break
-    else:
-        print ("No match found for all items!")
+    #update_target_price("macbook air m1")
+    #update_target_price("pixel 6a")
+    #add_item("Gucci","リュック", brand_dependent=True)
+    #print(check_initial_entries("gucci リュック"))
+    print(fast_item_query("gucci リュック", 10000, pages=5))

@@ -61,6 +61,7 @@ class Item:
         cur.execute(f"""
             UPDATE items SET
             {data}
+            WHERE item_code = "{self._item_code}"
         """)
         conn.commit()
 

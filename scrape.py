@@ -69,7 +69,9 @@ def scrape_entries(query, status, pages=3, neg=None):
             
             price = entry.get_attribute("price")
             src = entry.get_attribute("src")
-            link = re.search("m\d+", src).group()
+            link = re.search("m\d+", src)
+            link = link.group() if link else src
+            
             entries.append(Entry(title, link, price))
 
         if pages == 0:
